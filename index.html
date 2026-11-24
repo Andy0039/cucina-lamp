@@ -107,7 +107,7 @@ button:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
   <h3>Cuochi</h3>
   <div class="row2" id="plys"></div>
   <div id="onl" style="display:none;margin-top:12px">
-    <div id="srvBox"><p style="margin-bottom:6px">Indirizzo del tuo server</p><input class="fld" id="srv" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://cucina-lampo.onrender.com"></div>
+    <div id="srvBox"><p style="margin-bottom:6px">Server (già impostato, cambialo solo se serve)</p><input class="fld" id="srv" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://cucina-lampo.onrender.com"></div>
     <button class="sec" id="mkRoom" style="margin:0 0 8px">Crea una stanza</button>
     <div class="joinrow"><input class="fld" id="codeIn" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Codice"><button class="sec" id="joinRoom">Entra</button></div>
     <div class="code" id="codeOut" style="display:none"></div>
@@ -391,7 +391,7 @@ function facing(chef){
   }
   return best;
 }
-function use(i){if(G&&G.guest){netSend({t:'use'});return;}const c=chefs[i];if(c&&G&&G.running&&!G.paused&&!G.edit){c.work=null;G.sayTo=i;try{interact(c,facing(c));}finally{G.sayTo=0;}}}
+function use(i){if(G&&G.guest){const c=chefs.find(c=>c.i===1);netSend(c?{t:'use',x:+c.cx.toFixed(3),y:+c.cy.toFixed(3),fx:+c.fx.toFixed(2),fy:+c.fy.toFixed(2)}:{t:'use'});return;}const c=chefs[i];if(c&&G&&G.running&&!G.paused&&!G.edit){c.work=null;G.sayTo=i;try{interact(c,facing(c));}finally{G.sayTo=0;}}}
 
 const PADS=[0,1].map(i=>{
   const el=$('pad'+i),kn=el.querySelector('i'),P={el,kn,id:null};
@@ -512,8 +512,10 @@ function update(dt){
     }
   }
   for(const chef of chefs){
-  const v=input(chef.i),mag=Math.hypot(v.x,v.y);
-  if(mag>.18){
+  const remote=G.online&&chef.i===1;
+  const v=remote?{x:0,y:0}:input(chef.i),mag=Math.hypot(v.x,v.y);
+  if(remote&&chef.rm){chef.work=null;}
+  else if(mag>.18){
     chef.work=null;
     const vx=v.x/mag,vy=v.y/mag,d=G.speed*Math.min(1,mag)*dt;
     chef.fx=vx;chef.fy=vy;chef.walk+=d*5;
@@ -986,7 +988,8 @@ function serverBase(){
   try{localStorage.setItem('cl-server',v)}catch(e){}
   return v.replace(/\/+$/,'');
 }
-try{$('srv').value=localStorage.getItem('cl-server')||''}catch(e){}
+const SERVER_DEFAULT='https://cucina-lampo.onrender.com';
+try{$('srv').value=localStorage.getItem('cl-server')||SERVER_DEFAULT}catch(e){$('srv').value=SERVER_DEFAULT}
 function netSend(o){if(NET.ws&&NET.ws.readyState===1)NET.ws.send(JSON.stringify(o));}
 function netClose(){const w=NET.ws;NET.ws=null;clearInterval(NET.ping);if(w)try{w.close()}catch(e){}NET.role=null;NET.peer=false;NET.code=null;$('codeOut').style.display='none';}
 function netConnect(first){
@@ -1016,8 +1019,11 @@ function onNet(m){
     else{NET.peer=false;if(G&&G.online)say('Il tuo amico si è disconnesso: può rientrare con lo stesso codice');else{netStatus('Il tuo amico è uscito. Aspetto…');renderMenu();}}
   }
   else if(NET.role==='host'&&G&&G.online){
-    if(m.t==='in'){joys[1]={x:+m.x||0,y:+m.y||0};}
-    else if(m.t==='use')use(1);
+    if(m.t==='pos'||m.t==='use'){const c=chefs[1];
+      if(c&&typeof m.x==='number'&&typeof m.y==='number'&&!hits(m.x,m.y)){c.cx=m.x;c.cy=m.y;}
+      if(c&&typeof m.fx==='number'){c.fx=m.fx;c.fy=m.fy;}
+      if(c&&m.t==='pos'){c.rm=!!m.m;if(typeof m.w==='number')c.walk=m.w;}
+      if(m.t==='use')use(1);}
   }
   else if(NET.role==='guest'){
     if(m.t==='snap')applySnap(m.d);
@@ -1027,37 +1033,61 @@ function onNet(m){
 }
 $('mkRoom').addEventListener('click',()=>netConnect({t:'create'}));
 $('joinRoom').addEventListener('click',()=>{const c=$('codeIn').value.trim().toUpperCase();if(c.length!==4)return netStatus('Il codice ha 4 lettere');netConnect({t:'join',code:c});});
+const r2=v=>Math.round(v*100)/100;
+function layoutKey(){return S.map(s=>[s.x,s.y,s.type,s.raw||'',s.p||'',s.seat||0].join(':')).join('|');}
 function snapshot(){
-  const ix=s=>s?S.indexOf(s):-1;
-  return {loc:G.loc,dk:G.dk,
-    g:{day:G.day,t:G.t,dayLen:G.dayLen,coins:G.coins,hearts:G.hearts,plates:G.plates,running:G.running,paused:G.paused,edit:G.edit},
-    S:S.map(s=>({x:s.x,y:s.y,type:s.type,raw:s.raw,p:s.p,seat:s.seat,item:s.item,prog:+s.prog.toFixed(3),state:s.state,n:s.n,dirty:s.dirty,
-      cust:s.cust&&{st:s.cust.st,dish:{c:s.cust.dish.c,name:s.cust.dish.name},pat:+s.cust.pat.toFixed(2),max:s.cust.max,shirt:s.cust.shirt,skin:s.cust.skin,hair:s.cust.hair,style:s.cust.style,plate:s.cust.plate}})),
-    c:chefs.map(c=>({i:c.i,cx:+c.cx.toFixed(3),cy:+c.cy.toFixed(3),fx:+c.fx.toFixed(2),fy:+c.fy.toFixed(2),walk:+c.walk.toFixed(2),h:c.h,w:ix(c.work),f:ix(c.face)})),
-    q:G.queue.map(q=>({pat:+q.pat.toFixed(2),max:q.max,shirt:q.shirt,skin:q.skin,hair:q.hair,style:q.style})),
-    fl:floats,sel:ix(G.sel)};
+  const ix=s=>s?S.indexOf(s):-1,lk=layoutKey(),d={};
+  NET.full=(NET.full||0)-1;
+  if(lk!==NET.lk||NET.full<=0){NET.lk=lk;NET.full=25;d.loc=G.loc;d.dk=G.dk;d.L=S.map(s=>[s.x,s.y,s.type,s.raw||0,s.p||0,s.seat||0]);}
+  const rec=G.L.rec;
+  d.g=[G.day,r2(G.t),G.dayLen,G.coins,G.hearts,G.plates,G.running?1:0,G.paused?1:0,G.edit?1:0,r2(G.speed)];
+  d.s=S.map(s=>{const c=s.cust;return [s.item||0,r2(s.prog),s.state||0,s.n||0,s.dirty?1:0,
+    c?[c.st,rec.indexOf(c.dish),r2(c.pat),r2(c.max),c.shirt,c.skin,c.hair,c.style,c.plate||0]:0];});
+  d.c=chefs.map(c=>[c.i,r2(c.cx),r2(c.cy),r2(c.fx),r2(c.fy),r2(c.walk),c.h||0,ix(c.work),ix(c.face)]);
+  d.q=G.queue.map(q=>[r2(q.pat),r2(q.max),q.shirt,q.skin,q.hair,q.style]);
+  d.fl=floats.map(f=>[r2(f.x),r2(f.y),r2(f.t),f.txt]);d.sel=ix(G.sel);
+  return d;
 }
 function hostTick(dt){
   if(!NET.peer||NET.role!=='host')return;
-  NET.snapT-=dt;if(NET.snapT<=0){NET.snapT=.08;netSend({t:'snap',d:snapshot()});}
+  NET.snapT-=dt;if(NET.snapT<=0){NET.snapT=.1;netSend({t:'snap',d:snapshot()});}
 }
 function guestTick(dt){
-  NET.inT-=dt;const j=joys[0],k=input(0),v=(k.x||k.y)?k:j,s=v.x.toFixed(2)+','+v.y.toFixed(2);
-  if(NET.inT<=0||s!==NET.lastIn){if(s!==NET.lastIn||NET.inT<=0){netSend({t:'in',x:+v.x.toFixed(2),y:+v.y.toFixed(2)});NET.lastIn=s;NET.inT=.25;}}
+  const me=chefs.find(c=>c.i===1);if(!me)return;
+  const k=input(0),v=(k.x||k.y)?k:joys[0],mag=Math.hypot(v.x,v.y),mv=G.running&&!G.paused&&mag>.18;
+  if(mv){const vx=v.x/mag,vy=v.y/mag,d=G.speed*Math.min(1,mag)*dt;me.fx=vx;me.fy=vy;me.walk+=d*5;
+    tryMove(me,vx*d,0,Math.abs(vx)>=Math.abs(vy));tryMove(me,0,vy*d,Math.abs(vy)>Math.abs(vx));}
+  me.tx=me.cx;me.ty=me.cy;me.face=facing(me);
+  NET.inT-=dt;
+  const sig=me.cx.toFixed(2)+','+me.cy.toFixed(2)+','+(mv?1:0)+','+me.fx.toFixed(1)+','+me.fy.toFixed(1);
+  if(NET.inT<=0||(sig!==NET.lastIn&&NET.posT<=0)){netSend({t:'pos',x:+me.cx.toFixed(3),y:+me.cy.toFixed(3),fx:+me.fx.toFixed(2),fy:+me.fy.toFixed(2),w:+me.walk.toFixed(1),m:mv?1:0});NET.lastIn=sig;NET.inT=.5;NET.posT=.05;}
+  NET.posT=(NET.posT||0)-dt;
 }
 function applySnap(d){
-  const fresh=!G||!G.guest||G.loc!==d.loc;
-  if(fresh){
-    G={guest:true,online:true,two:true,loc:d.loc,L:LOC[d.loc],dk:d.dk,D:DIFF[d.dk],up:{},queue:[],spawns:[],offers:[],sel:null};
-    for(const id of ['menu','over'])$(id).classList.remove('on');document.body.classList.remove('two','editing');
+  if(d.L){
+    const fresh=!G||!G.guest||G.loc!==d.loc;
+    if(fresh){
+      G={guest:true,online:true,two:true,loc:d.loc,L:LOC[d.loc],dk:d.dk,D:DIFF[d.dk],up:{},queue:[],spawns:[],offers:[],sel:null,speed:3.4,hearts:-1};
+      for(const id of ['menu','over'])$(id).classList.remove('on');document.body.classList.remove('two','editing');chefs=[];
+    }
+    const ot=S.filter(s=>s.type==='table').length;
+    S=d.L.map(a=>mkStation({x:a[0],y:a[1],type:a[2],raw:a[3]||undefined,p:a[4]||undefined,seat:a[5]}));rebuildGrid();
+    if(fresh||S.filter(s=>s.type==='table').length!==ot)makeBg();
   }
-  const ot=S.filter(s=>s.type==='table').length,oh=G.hearts;
-  Object.assign(G,d.g);G.queue=d.q;S=d.S;rebuildGrid();
+  if(!G||!G.guest||!d.s||d.s.length!==S.length)return;
+  const oh=G.hearts,g=d.g;
+  Object.assign(G,{day:g[0],t:g[1],dayLen:g[2],coins:g[3],hearts:g[4],plates:g[5],running:!!g[6],paused:!!g[7],edit:!!g[8],speed:g[9]||3.4});
+  const rec=G.L.rec;
+  d.s.forEach((a,i)=>{const s=S[i];s.item=a[0]||null;s.prog=a[1];s.state=a[2]||null;s.n=a[3];s.dirty=!!a[4];
+    const c=a[5];s.cust=c?{st:c[0],dish:rec[c[1]]||rec[0],pat:c[2],max:c[3],shirt:c[4],skin:c[5],hair:c[6],style:c[7],plate:c[8]||null}:null;});
+  G.queue=d.q.map(q=>({pat:q[0],max:q[1],shirt:q[2],skin:q[3],hair:q[4],style:q[5]}));
   const prev=chefs;
-  chefs=d.c.map(c=>{const o=prev.find(p=>p.i===c.i);return {i:c.i,cx:o?o.cx:c.cx,cy:o?o.cy:c.cy,tx:c.cx,ty:c.cy,fx:c.fx,fy:c.fy,walk:c.walk,h:c.h,work:S[c.w]||null,face:S[c.f]||null};});
-  floats=d.fl||[];G.sel=d.sel>=0?S[d.sel]:null;
-  if(fresh||S.filter(s=>s.type==='table').length!==ot)makeBg();
-  if(fresh||oh!==G.hearts)renderHearts();
+  chefs=d.c.map(a=>{const o=prev.find(p=>p.i===a[0]);const mine=a[0]===1&&o;
+    return {i:a[0],cx:mine?o.cx:o?o.cx:a[1],cy:mine?o.cy:o?o.cy:a[2],tx:mine?o.cx:a[1],ty:mine?o.cy:a[2],fx:mine?o.fx:a[3],fy:mine?o.fy:a[4],walk:mine?o.walk:a[5],h:a[6]||null,work:S[a[7]]||null,face:mine?o.face:S[a[8]]||null};});
+  const me=chefs.find(c=>c.i===1);
+  if(me&&(!G.running||hits(me.cx,me.cy)||Math.hypot(me.cx-d.c[1][1],me.cy-d.c[1][2])>3)){const a=d.c.find(a=>a[0]===1);if(a){me.cx=me.tx=a[1];me.cy=me.ty=a[2];}}
+  floats=d.fl.map(f=>({x:f[0],y:f[1],t:f[2],txt:f[3]}));G.sel=d.sel>=0?S[d.sel]:null;
+  if(oh!==G.hearts)renderHearts();
   const waiting=!G.running&&!$('over').classList.contains('on');
   $('wait').classList.toggle('on',waiting);
   if(G.paused&&G.running){$('hint').textContent='L\'host ha messo in pausa';$('hint').className='say';toastT=.3;}
@@ -1080,7 +1110,7 @@ const ro=new ResizeObserver(resize);ro.observe($('wrap'));resize();
 let last=performance.now();
 function loop(t){
   const dt=Math.min(.05,(t-last)/1000);last=t;
-  if(G&&G.guest){for(const c of chefs){c.cx+=(c.tx-c.cx)*Math.min(1,dt*14);c.cy+=(c.ty-c.cy)*Math.min(1,dt*14);}guestTick(dt);}
+  if(G&&G.guest){for(const c of chefs)if(c.i!==1){c.cx+=(c.tx-c.cx)*Math.min(1,dt*14);c.cy+=(c.ty-c.cy)*Math.min(1,dt*14);}guestTick(dt);}
   else if(G&&G.online)hostTick(dt);
   if(G&&G.running&&!G.paused&&!G.guest){update(dt);
     for(const p of parts){p.t-=dt;p.x+=p.vx*dt;p.y+=p.vy*dt;}parts=parts.filter(p=>p.t>0);if(parts.length>160)parts.splice(0,parts.length-160);}
